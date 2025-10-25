@@ -4,3 +4,5 @@ langchain-google-genai
 youtube-transcript-api
 requests
 python-dotenv
+langchain-text-splitters
+
