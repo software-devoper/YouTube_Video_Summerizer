@@ -3,7 +3,7 @@ from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
 from youtube_transcript_api import YouTubeTranscriptApi, YouTubeRequestFailed, TranscriptsDisabled, NoTranscriptFound
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain.text_splitter import RecursiveCharacterTextSplitter
 import urllib.parse
 import streamlit as st
 import os
@@ -18,7 +18,14 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
+proxy_url=os.getenv("PROXY_URL")
+session = requests.Session()
+session.proxies = {
+    "http": proxy_url,
+    "https": proxy_url
+}
 
+YouTubeTranscriptApi._DEFAULT_REQUEST_SESSION = session
 # Initialize the model
 @st.cache_resource
 def load_model():
@@ -51,10 +58,11 @@ def get_transcript_with_retry(video_id, max_retries=3):
             logger.info(f"Attempt {attempt + 1} to fetch transcript for video {video_id}")
             
             # Use fetch method as requested
-            YT_api=YouTubeTranscriptApi()
-            transcript_list =YT_api.fetch(
+            
+            transcript_list =YouTubeTranscriptApi().fetch(
                 video_id, 
-                languages=['en', 'hi']
+                languages=['en', 'hi'],
+                preserve_formatting=True
             )
             
             # Convert to text
@@ -74,14 +82,14 @@ def get_transcript_with_retry(video_id, max_retries=3):
             error_msg = f"YouTube request failed (attempt {attempt + 1}): {str(e)}"
             logger.warning(error_msg)
             if attempt < max_retries - 1:
-                time.sleep(2)  # Wait before retry
+                time.sleep(5)  # Wait before retry
                 continue
             return None, error_msg
         except Exception as e:
             error_msg = f"Unexpected error (attempt {attempt + 1}): {str(e)}"
             logger.error(error_msg)
             if attempt < max_retries - 1:
-                time.sleep(2)
+                time.sleep(5)
                 continue
             return None, error_msg
     
@@ -183,7 +191,7 @@ You are a highly intelligent assistant that understands YouTube videos and provi
 
 def main():
     st.set_page_config(
-        page_title="YouTube Video Summarizer",
+        page_title="YouTube Transcript Summarizer",
         page_icon="https://upload.wikimedia.org/wikipedia/commons/4/42/YouTube_icon_%282013-2017%29.png",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -233,10 +241,10 @@ def main():
 <h1 class="main-header">
     <img src="https://upload.wikimedia.org/wikipedia/commons/4/42/YouTube_icon_%282013-2017%29.png" 
          alt="YouTube" width="50" style="vertical-align:middle;"> 
-    YouTube Video Summarizer
+    YouTube Transcript Summarizer
 </h1>
 """, unsafe_allow_html=True)
-    
+
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Settings")
@@ -399,6 +407,7 @@ def main():
             # Show raw transcript in expander
             with st.expander("📄 View Raw Transcript"):
                 st.text_area("Transcript", transcript, height=200, key=f"raw_transcript_{video_id}")
+
             
             # Process transcript
             start_time = time.time()
@@ -482,5 +491,4 @@ def main():
         """)
 
 if __name__ == "__main__":
-
-    main() 
+    main()
