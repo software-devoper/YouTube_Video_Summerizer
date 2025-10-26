@@ -25,7 +25,7 @@ session.proxies = {
     "https": proxy_url
 }
 
-YouTubeTranscriptApi._DEFAULT_REQUEST_SESSION = session
+YouTubeTranscriptApi()._DEFAULT_REQUEST_SESSION = session
 # Initialize the model
 @st.cache_resource
 def load_model():
@@ -492,4 +492,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
