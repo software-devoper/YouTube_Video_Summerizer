@@ -2,8 +2,9 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import PromptTemplate
 from dotenv import load_dotenv
-from youtube_transcript_api import YouTubeTranscriptApi, YouTubeRequestFailed, TranscriptsDisabled, NoTranscriptFound
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+# from youtube_transcript_api import YouTubeTranscriptApi, YouTubeRequestFailed, TranscriptsDisabled, NoTranscriptFound
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import YoutubeLoader
 import urllib.parse
 import streamlit as st
 import os
@@ -18,14 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
-proxy_url=os.getenv("PROXY_URL")
-session = requests.Session()
-session.proxies = {
-    "http": proxy_url,
-    "https": proxy_url
-}
 
-YouTubeTranscriptApi._DEFAULT_REQUEST_SESSION = session
 # Initialize the model
 @st.cache_resource
 def load_model():
@@ -52,48 +46,18 @@ def extract_video_id(url):
         return None
 
 def get_transcript_with_retry(video_id, max_retries=3):
-    """Get transcript with retry mechanism and proper error handling"""
+    youtube_url = f"https://www.youtube.com/watch?v={video_id}"
     for attempt in range(max_retries):
         try:
-            logger.info(f"Attempt {attempt + 1} to fetch transcript for video {video_id}")
-            
-            # Use fetch method as requested
-            
-            transcript_list =YouTubeTranscriptApi().fetch(
-                video_id, 
-                languages=['en', 'hi'],
-                preserve_formatting=True
-            )
-            
-            # Convert to text
-            transcript = " ".join([entry.text for entry in transcript_list])
-            logger.info(f"Successfully fetched transcript with {len(transcript.split())} words")
-            return transcript, None
-            
-        except TranscriptsDisabled:
-            error_msg = "Transcripts are disabled for this video."
-            logger.error(error_msg)
-            return None, error_msg
-        except NoTranscriptFound:
-            error_msg = "No English or Hindi transcript found for this video."
-            logger.error(error_msg)
-            return None, error_msg
-        except YouTubeRequestFailed as e:
-            error_msg = f"YouTube request failed (attempt {attempt + 1}): {str(e)}"
-            logger.warning(error_msg)
-            if attempt < max_retries - 1:
-                time.sleep(5)  # Wait before retry
-                continue
-            return None, error_msg
+            loader = YoutubeLoader.from_youtube_url(youtube_url, language=['en', 'hi'])
+            transcript_text = " ".join([doc.page_content for doc in loader.load()])
+            return transcript_text, None
         except Exception as e:
-            error_msg = f"Unexpected error (attempt {attempt + 1}): {str(e)}"
-            logger.error(error_msg)
             if attempt < max_retries - 1:
-                time.sleep(5)
+                time.sleep(2)
                 continue
-            return None, error_msg
-    
-    return None, "All retry attempts failed"
+            return None, str(e)
+    return None, "Failed after retries"
 
 def get_video_title(video_id):
     """Get video title using YouTube oEmbed API"""
@@ -106,84 +70,62 @@ def get_video_title(video_id):
     return "Unknown Title"
 
 def summarize_transcript(transcript, query="Summarize the key points"):
-    """Summarize transcript with chunking and progress tracking"""
     try:
-        # Split transcript
-        splitter = RecursiveCharacterTextSplitter(
-            chunk_size=5000,
-            chunk_overlap=300
-        )
-        
+        splitter = RecursiveCharacterTextSplitter(chunk_size=5000, chunk_overlap=300)
         chunks = splitter.split_text(transcript)
-        
-        # Progress tracking
+
         progress_bar = st.progress(0)
         status_text = st.empty()
-        
         summary_prompt = PromptTemplate(
             input_variables=["chunk"],
             template="""
-You are a helpful assistant. Summarize the following part of a YouTube video transcript clearly and concisely:
+    You are a helpful assistant. Summarize the following part of a YouTube video transcript clearly:
 
-Transcript segment:
-{chunk}
-
-Provide a short summary capturing the key ideas and context.
-"""
+    Transcript segment:
+    {chunk}
+    """
         )
-        
+
         summarize_chain = summary_prompt | model | parser
         partial_summaries = []
-        
+
         for i, chunk in enumerate(chunks):
-            status_text.text(f"Processing chunk {i+1}/{len(chunks)}...")
-            try:
-                summary = summarize_chain.invoke({'chunk': chunk})
-                partial_summaries.append(summary)
-                progress_bar.progress((i + 1) / len(chunks))
-            except Exception as e:
-                logger.error(f"Error processing chunk {i+1}: {e}")
-                # Continue with other chunks even if one fails
-                partial_summaries.append(f"[Error processing this chunk: {str(e)}]")
-                progress_bar.progress((i + 1) / len(chunks))
-        
-        status_text.text("Combining summaries...")
-        combined_summary = " ".join(partial_summaries).replace('\n', " ").strip()
-        
-        # Final summary based on query
+            summary = summarize_chain.invoke({'chunk': chunk})
+            partial_summaries.append(summary)
+            progress_bar.progress((i + 1) / len(chunks))
+
+        combined_summary = " ".join(partial_summaries)
         final_prompt = PromptTemplate(
             input_variables=["combined_summary", "user_query"],
             template="""
-You are a highly intelligent assistant that understands YouTube videos and provides accurate, well-structured responses based on their content.
+    You are a highly intelligent assistant that understands YouTube videos and provides accurate, well-structured responses based on their content.
 
-🎬 Combined Transcript Summary:
-{combined_summary}
+    🎬 Combined Transcript Summary:
+    {combined_summary}
 
-💬 User Query:
-{user_query}
+    💬 User Query:
+    {user_query}
 
-🧠 Instructions:
-- Use the above *combined summary* (already condensed from the full transcript) to answer the user's query.
-- Your goal is to provide a **final summary** that:
-  - Gives a concise overview of the entire video.
-  - Directly answers the user's question.
-  - Maintains logical flow and coherence.
-  - Avoids repetition or unnecessary details.
-- If the query cannot be answered from the content, say:
-  **"Sorry, the video doesn't contain information about that."**
-- Write in a natural, engaging tone.
+    🧠 Instructions:
+    - Use the above *combined summary* (already condensed from the full transcript[0]) to answer the user's query.
+    - Your goal is to provide a **final summary** that:
+    - Gives a concise overview of the entire video.
+    - Directly answers the user's question.
+    - Maintains logical flow and coherence.
+    - Avoids repetition or unnecessary details.
+    - If the query cannot be answered from the content, say:
+    **"Sorry, the video doesn't contain information about that."**
+    - Write in a natural, engaging tone.
 
-📝 Final Answer:
-"""
+    📝 Final Answer:
+    """
         )
-        
+
         chain = final_prompt | model | parser
         final_result = chain.invoke({'combined_summary': combined_summary, 'user_query': query})
-        
-        progress_bar.empty()
-        status_text.empty()
-        
+
         return final_result, len(chunks), len(transcript.split())
+
         
     except Exception as e:
         logger.error(f"Error in summarize_transcript: {e}")
@@ -191,7 +133,7 @@ You are a highly intelligent assistant that understands YouTube videos and provi
 
 def main():
     st.set_page_config(
-        page_title="YouTube Transcript Summarizer",
+        page_title="YouTube Video Summarizer",
         page_icon="https://upload.wikimedia.org/wikipedia/commons/4/42/YouTube_icon_%282013-2017%29.png",
         layout="wide",
         initial_sidebar_state="expanded"
@@ -241,10 +183,10 @@ def main():
 <h1 class="main-header">
     <img src="https://upload.wikimedia.org/wikipedia/commons/4/42/YouTube_icon_%282013-2017%29.png" 
          alt="YouTube" width="50" style="vertical-align:middle;"> 
-    YouTube Transcript Summarizer
+    YouTube Video Summarizer
 </h1>
 """, unsafe_allow_html=True)
-
+    
     # Sidebar
     with st.sidebar:
         st.header("⚙️ Settings")
@@ -380,7 +322,7 @@ def main():
             st.error("❌ Invalid YouTube URL. Please check the URL and try again.")
             return
         
-        # Fetch transcript with retries
+        # Fetch transcript[0] with retries
         with st.spinner("🔄 Fetching transcript..."):
             transcript, error = get_transcript_with_retry(video_id, max_retries)
         
@@ -404,12 +346,11 @@ def main():
         if transcript:
             st.success(f"✅ Successfully fetched transcript ({len(transcript.split())} words)")
             
-            # Show raw transcript in expander
+            # Show raw transcript[0] in expander
             with st.expander("📄 View Raw Transcript"):
                 st.text_area("Transcript", transcript, height=200, key=f"raw_transcript_{video_id}")
-
             
-            # Process transcript
+            # Process transcript[0]
             start_time = time.time()
             
             with st.spinner("🤖 Analyzing transcript with AI..."):
@@ -470,7 +411,7 @@ def main():
         
         1. **Enter YouTube URL**: Paste any YouTube video link in the input field
         2. **Ask Your Question**: Specify what you want to know about the video
-        3. **Click Process**: The tool will fetch the transcript and generate insights
+        3. **Click Process**: The tool will fetch the transcript[0] and generate insights
         4. **Explore Results**: View summary, ask follow-up questions, and see statistics
         
         ### 🔍 Supported URL Formats
@@ -491,7 +432,4 @@ def main():
         """)
 
 if __name__ == "__main__":
-    main()
-
-
-
+    main() 
