@@ -6,3 +6,4 @@ langchain-google-genai
 streamlit
 python-dotenv
 requests
+youtube-transcript-api
