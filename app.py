@@ -384,25 +384,6 @@ def main():
                 }
                 st.session_state.history.append(history_item)
                 st.sidebar.success(f"✅ Saved to history")
-            
-            # Q&A Section
-            if enable_qa and transcript:
-                st.markdown("---")
-                st.subheader("❓ Ask Follow-up Questions")
-                
-                col1, col2 = st.columns([3, 1])
-                with col1:
-                    new_question = st.text_input("Ask another question about this video:", placeholder="e.g., Can you explain more about...", key="followup_question")
-                with col2:
-                    ask_btn = st.button("Ask Question", use_container_width=True, key="ask_followup")
-                
-                if ask_btn and new_question:
-                    with st.spinner("🤖 Thinking..."):
-                        qa_result, _, _ = summarize_transcript(transcript, new_question)
-                    
-                    st.markdown(f"**Q:** {new_question}")
-                    st.markdown(f"**A:** {qa_result}")
-    
     # Instructions
     with st.expander("ℹ️ How to use this tool"):
         st.markdown("""
@@ -432,5 +413,6 @@ def main():
 
 if __name__ == "__main__":
     main() 
+
 
 
